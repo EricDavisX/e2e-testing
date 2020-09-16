@@ -40,10 +40,11 @@ pipeline {
   stages {
     stage('Run Tests') {
       steps {
-        build(job: 'e2e-tests/e2e-testing-mbp/master',
+        build(job: "e2e-tests/e2e-testing-mbp/${env.JOB_BASE_NAME}",
           parameters: [
             booleanParam(name: 'forceSkipGitChecks', value: true),
             booleanParam(name: 'forceSkipPresubmit', value: true),
+            booleanParam(name: 'notifyOnGreenBuilds', value: true),
             string(name: 'runTestsSuite', value: 'ingest-manager'),
             string(name: 'SLACK_CHANNEL', value: "ingest-management"),
           ],

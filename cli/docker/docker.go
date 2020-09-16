@@ -32,7 +32,7 @@ func ExecCommandIntoContainer(ctx context.Context, containerName string, user st
 		"command":   cmd,
 		"detach":    detach,
 		"tty":       tty,
-	}).Debug("Creating command to be executed in container")
+	}).Trace("Creating command to be executed in container")
 
 	response, err := dockerClient.ContainerExecCreate(
 		ctx, containerName, types.ExecConfig{
@@ -61,7 +61,7 @@ func ExecCommandIntoContainer(ctx context.Context, containerName string, user st
 		"command":   cmd,
 		"detach":    detach,
 		"tty":       tty,
-	}).Debug("Command to be executed in container created")
+	}).Trace("Command to be executed in container created")
 
 	resp, err := dockerClient.ContainerExecAttach(ctx, response.ID, types.ExecStartCheck{
 		Detach: detach,
@@ -98,9 +98,22 @@ func ExecCommandIntoContainer(ctx context.Context, containerName string, user st
 		"command":   cmd,
 		"detach":    detach,
 		"tty":       tty,
-	}).Debug("Command sucessfully executed in container")
+	}).Trace("Command sucessfully executed in container")
 
 	output = strings.ReplaceAll(output, "\n", "")
+
+	patterns := []string{
+		"\x01\x00\x00\x00\x00\x00\x00\r",
+		"\x01\x00\x00\x00\x00\x00\x00)",
+	}
+	for _, pattern := range patterns {
+		if strings.HasPrefix(output, pattern) {
+			output = strings.ReplaceAll(output, pattern, "")
+			log.WithFields(log.Fields{
+				"output": output,
+			}).Trace("Output name has been sanitized")
+		}
+	}
 
 	return output, nil
 }
@@ -167,7 +180,7 @@ func RemoveDevNetwork() error {
 
 	log.WithFields(log.Fields{
 		"network": OPNetworkName,
-	}).Debug("Removing Dev Network...")
+	}).Trace("Removing Dev Network...")
 
 	if err := dockerClient.NetworkRemove(ctx, OPNetworkName); err != nil {
 		return err
@@ -175,7 +188,7 @@ func RemoveDevNetwork() error {
 
 	log.WithFields(log.Fields{
 		"network": OPNetworkName,
-	}).Debug("Dev Network has been removed")
+	}).Trace("Dev Network has been removed")
 
 	return nil
 }

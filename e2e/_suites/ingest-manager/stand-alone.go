@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const standAloneVersionBase = "8.0.0-SNAPSHOT"
+
 // standAloneVersion is the version of the agent to use
 // It can be overriden by ELASTIC_AGENT_VERSION env var
 var standAloneVersion = "7.9.0"
@@ -24,7 +27,7 @@ var standAloneVersion = "7.9.0"
 func init() {
 	config.Init()
 
-	standAloneVersion = shell.GetEnv("ELASTIC_AGENT_VERSION", standAloneVersion)
+	standAloneVersion = shell.GetEnv("ELASTIC_AGENT_VERSION", standAloneVersionBase)
 }
 
 // StandAloneTestSuite represents the scenarios for Stand-alone-mode
@@ -37,6 +40,29 @@ type StandAloneTestSuite struct {
 	RuntimeDependenciesStartDate time.Time
 }
 
+// afterScenario destroys the state created by a scenario
+func (sats *StandAloneTestSuite) afterScenario() {
+	serviceManager := services.NewServiceManager()
+	serviceName := ElasticAgentServiceName
+
+	if log.IsLevelEnabled(log.DebugLevel) {
+		_ = sats.getContainerLogs()
+	}
+
+	if !developerMode {
+		_ = serviceManager.RemoveServicesFromCompose(IngestManagerProfileName, []string{serviceName}, profileEnv)
+	} else {
+		log.WithField("service", serviceName).Info("Because we are running in development mode, the service won't be stopped")
+	}
+
+	if _, err := os.Stat(sats.AgentConfigFilePath); err == nil {
+		os.Remove(sats.AgentConfigFilePath)
+		log.WithFields(log.Fields{
+			"path": sats.AgentConfigFilePath,
+		}).Debug("Elastic Agent configuration file removed.")
+	}
+}
+
 func (sats *StandAloneTestSuite) contributeSteps(s *godog.Suite) {
 	s.Step(`^a stand-alone agent is deployed$`, sats.aStandaloneAgentIsDeployed)
 	s.Step(`^there is new data in the index from agent$`, sats.thereIsNewDataInTheIndexFromAgent)
@@ -45,12 +71,12 @@ func (sats *StandAloneTestSuite) contributeSteps(s *godog.Suite) {
 }
 
 func (sats *StandAloneTestSuite) aStandaloneAgentIsDeployed() error {
-	log.Debug("Deploying an agent to Fleet")
+	log.Trace("Deploying an agent to Fleet")
 
 	serviceManager := services.NewServiceManager()
 
-	profile := "ingest-manager"
-	serviceName := "elastic-agent"
+	profile := IngestManagerProfileName
+	serviceName := ElasticAgentServiceName
 	containerName := fmt.Sprintf("%s_%s_%d", profile, serviceName, 1)
 
 	configurationFileURL := "https://raw.githubusercontent.com/elastic/beats/7.9.0/x-pack/elastic-agent/elastic-agent.docker.yml"
@@ -79,20 +105,27 @@ func (sats *StandAloneTestSuite) aStandaloneAgentIsDeployed() error {
 	sats.Hostname = hostname
 	sats.Cleanup = true
 
-	if log.IsLevelEnabled(log.DebugLevel) {
-		composes := []string{
-			profile,     // profile name
-			serviceName, // agent service
-		}
-		err = serviceManager.RunCommand(profile, composes, []string{"logs", serviceName}, profileEnv)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"error":   err,
-				"service": serviceName,
-			}).Error("Could not retrieve Elastic Agent logs")
+	return nil
+}
 
-			return err
-		}
+func (sats *StandAloneTestSuite) getContainerLogs() error {
+	serviceManager := services.NewServiceManager()
+
+	profile := IngestManagerProfileName
+	serviceName := ElasticAgentServiceName
+
+	composes := []string{
+		profile,     // profile name
+		serviceName, // agent service
+	}
+	err := serviceManager.RunCommand(profile, composes, []string{"logs", serviceName}, profileEnv)
+	if err != nil {
+		log.WithFields(log.Fields{
+			"error":   err,
+			"service": serviceName,
+		}).Error("Could not retrieve Elastic Agent logs")
+
+		return err
 	}
 
 	return nil
@@ -107,7 +140,7 @@ func (sats *StandAloneTestSuite) thereIsNewDataInTheIndexFromAgent() error {
 		return err
 	}
 
-	log.Debugf("Search result: %v", result)
+	log.Tracef("Search result: %v", result)
 
 	return e2e.AssertHitsArePresent(result)
 }
@@ -115,13 +148,8 @@ func (sats *StandAloneTestSuite) thereIsNewDataInTheIndexFromAgent() error {
 func (sats *StandAloneTestSuite) theDockerContainerIsStopped(serviceName string) error {
 	serviceManager := services.NewServiceManager()
 
-	err := serviceManager.RemoveServicesFromCompose("ingest-manager", []string{serviceName}, profileEnv)
+	err := serviceManager.RemoveServicesFromCompose(IngestManagerProfileName, []string{serviceName}, profileEnv)
 	if err != nil {
-		log.WithFields(log.Fields{
-			"error":   err,
-			"service": serviceName,
-		}).Error("Could not stop the service.")
-
 		return err
 	}
 	sats.AgentStoppedDate = time.Now().UTC()
@@ -223,7 +251,7 @@ func searchAgentData(hostname string, startDate time.Time, minimumHitsCount int,
 		},
 	}
 
-	indexName := ".ds-logs-elastic.agent-default-000001"
+	indexName := "logs-elastic.agent-default"
 
 	result, err := e2e.WaitForNumberOfHits(indexName, esQuery, minimumHitsCount, maxTimeout)
 	if err != nil {
